@@ -1,147 +1,80 @@
-# csv-nav: Chat com Notas Fiscais (NFe)
+# csv-nav
 
-[//]: # (Add badges here for shields.io, e.g., Python version, license, build status)
-<p align="center">
-  <a href="#-português">Português</a> •
-  <a href="#-english">English</a>
-</p>
+Ferramenta conversacional para análise de Notas Fiscais Eletrônicas (NF-e) brasileiras via linguagem natural. O usuário faz upload dos arquivos CSV exportados da SEFAZ, faz perguntas em português e recebe respostas baseadas nos dados reais — sem escrever SQL.
+
+Demo: [csvnav-dvjmgnhdbkphhishggyi6q.streamlit.app](https://csvnav-dvjmgnhdbkphhishggyi6q.streamlit.app/)
 
 ---
 
-## 🇧🇷 Português
+## Como funciona
 
-### Visão Geral
+O fluxo tem três etapas:
 
-O **csv-nav** é uma ferramenta de chat conversacional que utiliza o poder da API Gemini do Google e a eficiência de um banco de dados SQLite para analisar arquivos CSV de Notas Fiscais Eletrônicas (NFe). Faça perguntas em linguagem natural e obtenha insights valiosos sobre seus dados fiscais.
+1. **Ingestão** — os CSVs são lidos, as colunas mapeadas dos nomes originais da SEFAZ para nomes SQL-friendly, e os dados carregados em um banco SQLite local com duas tabelas relacionadas (`nfs_cabecalho` e `nfs_itens`).
 
-### ✨ Funcionalidades
+2. **Agente SQL** — a pergunta do usuário é passada a um agente LangChain que usa o modelo Gemini para gerar a query SQL correspondente, executa no SQLite e retorna o resultado.
 
-* **Chat Interativo:** Converse com seus dados de NFe como se estivesse falando com um analista.
-* **Análise Inteligente:** Extraia informações como totais, produtos mais vendidos, principais clientes/fornecedores e muito mais.
-* **Suporte a Múltiplos Arquivos:** Faça upload de arquivos `.csv` ou de um arquivo `.zip` contendo todos os seus CSVs.
-* **Interface Simples:** Interface web amigável construída com Streamlit para fácil upload e visualização.
-* **Setup Simplificado:** Execução rápida e isolada utilizando Docker e VS Code Dev Containers.
+3. **Interface** — tudo exposto via Streamlit: upload de arquivos, campo de chat e exibição das respostas.
 
-### 🛠️ Tecnologias Utilizadas
+O padrão de agente usado é ReAct (Reasoning + Acting): o modelo alterna entre raciocinar sobre o que precisa saber, escolher uma ferramenta SQL (inspecionar schema, executar query, checar resultado) e agir — até ter dados suficientes para responder.
 
-* **Linguagem:** Python
-* **IA Generativa:** Google Gemini
-* **Frameworks de IA:** LangChain, LangChain Google GenAI
-* **Interface Web:** Streamlit
-* **Manipulação de Dados:** Pandas
-* **Banco de Dados:** SQLite
+---
 
-### 🚀 Começando
+## Tecnologias
 
-* Você pode experimentar as funcionalidades desse software diretamente em: [CSV_NAV_WEB](https://csvnav-dvjmgnhdbkphhishggyi6q.streamlit.app/)
-* Ou então siga as instruções abaixo para executar o projeto em seu ambiente local.
+| Camada | Tecnologia |
+|---|---|
+| LLM | Google Gemini 2.5 Flash |
+| Orquestração de agente | LangChain (`create_sql_agent`, `SQLDatabaseToolkit`) |
+| Banco de dados | SQLite |
+| Interface | Streamlit |
+| Manipulação de dados | Pandas |
+| Linguagem | Python 3 |
 
+---
 
-### 🚀 Instalação local com Docker e VS Code (via Remote Containers)
+## Estrutura
 
-Este é o método **recomendado** para executar a aplicação `csv-nav`, garantindo um ambiente isolado, reprodutível e com dependências corretamente configuradas.
+```
+csv_nav/
+├── app.py               # Interface Streamlit e gerenciamento de estado
+├── data_ingestion.py    # Leitura dos CSVs, mapeamento de colunas, carga no SQLite
+├── database_agent.py    # Configuração do agente LangChain + system prompt
+├── output_formatter.py  # Formatação das respostas para exibição
+└── requirements.txt
+```
 
-#### ✅ Pré-requisitos
+---
 
-Antes de começar, garanta que você tenha os seguintes softwares instalados:
+## Rodando localmente
 
-* [Git](https://git-scm.com/)
-* [Docker](https://www.docker.com/products/docker-desktop/)
-* [Visual Studio Code](https://code.visualstudio.com/)
-* [Extensão Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) para o VS Code.
-
-Além disso, deverá obter uma chave de API do Google Gemini que é solicitada durante a execução da aplicação.
-* Você pode obter uma chave de API do Google Gemini em [Google AI Studio](https://aistudio.google.com/app/apikey).
-
-#### ⚙️ Passo a Passo de Instalação
-
-##### 1. Clone o repositório
-
-Abra um terminal (cmd, PowerShell ou Git Bash) e execute:
+**Pré-requisitos:** Python 3.10+ e uma chave da [Google AI Studio](https://aistudio.google.com/app/apikey).
 
 ```bash
-git clone https://github.com/Marconiadsf/csv_nav.git
+git clone https://github.com/marconiadsf/csv_nav.git
 cd csv_nav
-```
-
-##### 2. Crie e acesse a pasta no Docker
-
-Crie um container com a imagem oficial do Python, mapeando o diretório clonado:
-
-```bash
-docker run -it -v C:/Users/<SeuUsuario>/csv_nav:/app -p 8501:8501 python:latest bash
-```
-
-> 🧠 Substitua `<SeuUsuario>` pelo nome da sua conta de usuário no Windows.
-
-##### 3. Conecte o VS Code ao container
-
-1. Abra o **Visual Studio Code**.
-2. Pressione `Ctrl+Shift+P` para abrir a paleta de comandos.
-3. Digite `Remote: Show Remote Menu` e selecione a opção.
-4. Localize o container recém-criado e clique em **"Attach in a New Window"**.
-5. Crie o workspace apontando para a pasta `/app`.
-
-##### 4. Instalação de Dependências 📦
-
-No terminal dentro do VS Code (já conectado ao container), execute:
-
-```bash
 pip install -r requirements.txt
-```
-
-> 📁 Certifique-se de estar no diretório `/app` onde o arquivo `requirements.txt` está localizado.
-
-#### 🚀 Execução da Aplicação
-
-Para iniciar a aplicação, execute no terminal:
-
-```bash
 streamlit run app.py
 ```
 
-Após a execução, o Streamlit exibirá um endereço local como:
-
-```
-http://0.0.0.0:8501
-```
-
-##### Acessando no Navegador
-
-- Você pode abrir a aplicação diretamente acessando:
-  - `http://localhost:8501`
-  - ou, se necessário, substituir `0.0.0.0` pelo IP da sua máquina, por exemplo: `http://192.168.0.1:8501`
-- Para descobrir seu IP local, utilize o comando `ipconfig` no terminal (Windows).
+A chave da API é inserida diretamente na interface — não é necessário configurar variável de ambiente.
 
 ---
 
-### ✅ Pronto!
+## Formato dos arquivos
 
-A aplicação `csv-nav` estará disponível via navegador para você:
+A ferramenta espera os CSVs no formato padrão exportado pelo portal da SEFAZ:
 
-- Enviar arquivos `.csv` ou `.zip` com suas Notas Fiscais.
-- Fazer perguntas em **linguagem natural** sobre os dados enviados.
-- Obter insights fiscais diretamente com suporte da IA Gemini + LangChain.
+- `*_NFs_Cabecalho.csv` — dados do cabeçalho da NF-e
+- `*_NFs_Itens.csv` — itens de cada nota
 
-
-#### Como Usar
-
-A aplicação foi projetada para ser simples e intuitiva. Siga os passos abaixo após iniciá-la:
-
-1.  **Carregue seus Arquivos:** Na interface da aplicação, utilize o seletor de arquivos para fazer o upload dos seus dados de NFe. **Você pode enviar múltiplos arquivos `.csv` ou um único arquivo `.zip` contendo os CSVs.**
-2.  **Aguarde o Processamento:** A ferramenta irá ler, processar e indexar os dados dos seus arquivos em um banco de dados temporário para análise.
-3.  **Faça suas Perguntas:** Utilize a caixa de chat principal para fazer **perguntas em linguagem natural sobre as informações contidas nos arquivos** que você enviou.
-
-**Exemplos de perguntas:**
-* *"Qual foi o valor total das notas fiscais no período?"*
-* *"Liste os 5 produtos mais vendidos."*
-* *"Quais foram os principais clientes e seus respectivos totais de compra?"*
-* *"Mostre-me as notas fiscais emitidas no mês de maio."*
-
-### 🔧 Solução de Problemas (Troubleshooting)
-
-* **Erro de WSL no Windows:** Se o Docker apresentar um erro relacionado ao WSL (Windows Subsystem for Linux), pode ser necessário atualizar sua versão do WSL. Abra o PowerShell ou CMD como administrador e execute `wsl --update`, depois reinicie o computador.
-* **Problemas no Container:** Se o Dev Container não iniciar corretamente, você pode tentar limpar containers antigos. Abra o Docker Desktop, vá para a seção "Containers", encontre o container associado a este projeto e remova-o. Depois, tente reabrir no VS Code.
+Também aceita um único arquivo `.zip` contendo os dois CSVs.
 
 ---
 
+## Conceitos aplicados
+
+- **Text-to-SQL via LLM** — tradução de linguagem natural para SQL usando um modelo de linguagem como intermediário
+- **Padrão ReAct** — agente que alterna raciocínio e ação em loop até atingir resposta suficiente
+- **System prompt estruturado** — o agente recebe schema completo das tabelas e regras de output antes de qualquer pergunta, garantindo consistência nas respostas
+- **Schema da NF-e** — modelagem dos dados fiscais brasileiros (CFOP, NCM, CHAVE_DE_ACESSO, emitente/destinatário)
