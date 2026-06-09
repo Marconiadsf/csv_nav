@@ -68,7 +68,7 @@ def get_db_connection():
     db_uri = f"sqlite:///{DB_FILE}"
     try:
         db = SQLDatabase.from_uri(db_uri)
-        logging.info(f"SQLDatabase conectado a {DB_FILE}. Tabelas: {db.get_table_names()}")
+        logging.info(f"SQLDatabase conectado a {DB_FILE}. Tabelas: {db.get_usable_table_names()}")
         return db
     except Exception as e:
         logging.error(f"Erro ao criar SQLDatabase a partir de {db_uri}: {e}")
@@ -102,7 +102,7 @@ def query_database_agent(question: str, google_api_key: str):
     try:
         db = get_db_connection()
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             google_api_key=google_api_key,
             temperature=0,
         )
@@ -119,6 +119,14 @@ def query_database_agent(question: str, google_api_key: str):
             ]
         })
         output = result["messages"][-1].content
+        # Modelos com thinking retornam lista de blocos em vez de string —
+        # normaliza para string independente do modelo usado
+        if isinstance(output, list):
+            output = "\n".join(
+                block.get("text", "")
+                for block in output
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
         return {"result": output}
 
     except FileNotFoundError as e:
