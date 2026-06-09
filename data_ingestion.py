@@ -123,8 +123,9 @@ def create_tables(conn):
 def read_csv_flexible(filepath):
     for sep in [',', ';']:
         try:
-            df = pd.read_csv(filepath, sep=sep)
-            # descarta leitura com separador errado (todas as colunas em uma só)
+            # dtype=str garante que colunas com chaves longas (44 dígitos) não sejam
+            # inferidas como inteiro, o que transbordaria o SQLite INTEGER
+            df = pd.read_csv(filepath, sep=sep, dtype=str)
             if len(df.columns) > 1:
                 logging.info(f"CSV lido com separador '{sep}' | shape: {df.shape}")
                 logging.info(f"Colunas encontradas: {list(df.columns)}")
