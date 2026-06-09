@@ -121,20 +121,18 @@ def create_tables(conn):
         logging.error(f"Erro ao criar tabelas: {e}")
 
 def read_csv_flexible(filepath):
-    """ Tenta ler um CSV com separador vírgula e depois ponto e vírgula. """
-    try:
-        df = pd.read_csv(filepath, sep=',')
-        logging.info(f"CSV {filepath} lido com separador ','")
-        return df
-    except Exception as e1:
-        logging.warning(f"Falha ao ler {filepath} com ',': {e1}. Tentando com ';'")
+    for sep in [',', ';']:
         try:
-            df = pd.read_csv(filepath, sep=';')
-            logging.info(f"CSV {filepath} lido com separador ';'")
-            return df
-        except Exception as e2:
-            logging.error(f"Falha ao ler {filepath} com ',' e ';': {e2}")
-            raise
+            df = pd.read_csv(filepath, sep=sep)
+            # descarta leitura com separador errado (todas as colunas em uma só)
+            if len(df.columns) > 1:
+                logging.info(f"CSV lido com separador '{sep}' | shape: {df.shape}")
+                logging.info(f"Colunas encontradas: {list(df.columns)}")
+                return df
+            logging.warning(f"Separador '{sep}' produziu apenas 1 coluna — tentando próximo")
+        except Exception as e:
+            logging.warning(f"Falha ao ler com '{sep}': {e}")
+    raise ValueError(f"Não foi possível ler {filepath} com ',' nem ';'")
 
 def ingest_data(conn, cabecalho_csv_path, itens_csv_path):
     """ Lê os arquivos CSV e insere os dados nas tabelas SQLite usando as instruções do 'Agente Curador'. """
@@ -143,42 +141,76 @@ def ingest_data(conn, cabecalho_csv_path, itens_csv_path):
         cabecalho_mapping = ingestion_instructions["cabecalho"]
         itens_mapping = ingestion_instructions["itens"]
 
-        logging.info(f"Iniciando ingestão do cabeçalho: {cabecalho_csv_path}")
+        # --- CABEÇALHO ---
+        logging.info(f"[CABECALHO] Lendo: {cabecalho_csv_path}")
         df_cabecalho = read_csv_flexible(cabecalho_csv_path)
+
+        colunas_csv = set(df_cabecalho.columns)
+        colunas_esperadas = set(cabecalho_mapping.keys())
+        nao_encontradas = colunas_esperadas - colunas_csv
+        extras = colunas_csv - colunas_esperadas
+        if nao_encontradas:
+            logging.warning(f"[CABECALHO] Colunas do mapeamento NÃO encontradas no CSV: {sorted(nao_encontradas)}")
+        if extras:
+            logging.info(f"[CABECALHO] Colunas extras no CSV (ignoradas): {sorted(extras)}")
+
         df_cabecalho.rename(columns=cabecalho_mapping, inplace=True)
 
-        # Tratamento de tipos para cabeçalho
         df_cabecalho['VALOR_NOTA_FISCAL'] = pd.to_numeric(df_cabecalho['VALOR_NOTA_FISCAL'], errors='coerce')
         df_cabecalho['SERIE'] = pd.to_numeric(df_cabecalho['SERIE'], errors='coerce').astype('Int64')
         df_cabecalho['NUMERO'] = pd.to_numeric(df_cabecalho['NUMERO'], errors='coerce').astype('Int64')
 
-        logging.info("Inserindo dados na tabela nfs_cabecalho...")
-        df_cabecalho[list(cabecalho_mapping.values())].to_sql('nfs_cabecalho', conn, if_exists='replace', index=False)
-        logging.info(f"{len(df_cabecalho)} registros inseridos/substituídos em nfs_cabecalho.")
+        nulos_valor = df_cabecalho['VALOR_NOTA_FISCAL'].isna().sum()
+        if nulos_valor > 0:
+            logging.warning(f"[CABECALHO] {nulos_valor} linhas com VALOR_NOTA_FISCAL nulo após conversão")
 
-        logging.info(f"Iniciando ingestão dos itens: {itens_csv_path}")
+        colunas_para_inserir = [c for c in cabecalho_mapping.values() if c in df_cabecalho.columns]
+        colunas_faltando = [c for c in cabecalho_mapping.values() if c not in df_cabecalho.columns]
+        if colunas_faltando:
+            logging.warning(f"[CABECALHO] Colunas ausentes na inserção: {colunas_faltando}")
+
+        logging.info(f"[CABECALHO] Inserindo {len(df_cabecalho)} linhas em nfs_cabecalho...")
+        df_cabecalho[colunas_para_inserir].to_sql('nfs_cabecalho', conn, if_exists='replace', index=False)
+        logging.info(f"[CABECALHO] OK — {len(df_cabecalho)} registros inseridos.")
+
+        # --- ITENS ---
+        logging.info(f"[ITENS] Lendo: {itens_csv_path}")
         df_itens = read_csv_flexible(itens_csv_path)
+
+        colunas_csv_itens = set(df_itens.columns)
+        colunas_esperadas_itens = set(itens_mapping.keys())
+        nao_encontradas_itens = colunas_esperadas_itens - colunas_csv_itens
+        extras_itens = colunas_csv_itens - colunas_esperadas_itens
+        if nao_encontradas_itens:
+            logging.warning(f"[ITENS] Colunas do mapeamento NÃO encontradas no CSV: {sorted(nao_encontradas_itens)}")
+        if extras_itens:
+            logging.info(f"[ITENS] Colunas extras no CSV (ignoradas): {sorted(extras_itens)}")
+
         df_itens.rename(columns=itens_mapping, inplace=True)
 
-        # Selecionar e tratar tipos para itens
-        df_itens_final = df_itens[list(itens_mapping.values())].copy()
-        df_itens_final['NUMERO_PRODUTO'] = pd.to_numeric(df_itens_final['NUMERO_PRODUTO'], errors='coerce').astype('Int64')
-        df_itens_final['CFOP'] = pd.to_numeric(df_itens_final['CFOP'], errors='coerce').astype('Int64')
-        df_itens_final['QUANTIDADE'] = pd.to_numeric(df_itens_final['QUANTIDADE'], errors='coerce')
-        df_itens_final['VALOR_UNITARIO'] = pd.to_numeric(df_itens_final['VALOR_UNITARIO'], errors='coerce')
-        df_itens_final['VALOR_TOTAL'] = pd.to_numeric(df_itens_final['VALOR_TOTAL'], errors='coerce')
+        colunas_itens_disponiveis = [c for c in itens_mapping.values() if c in df_itens.columns]
+        df_itens_final = df_itens[colunas_itens_disponiveis].copy()
 
-        logging.info("Inserindo dados na tabela nfs_itens...")
-        # Limpar tabela de itens antes de inserir para evitar duplicação se re-executado
+        for col in ['NUMERO_PRODUTO', 'CFOP']:
+            if col in df_itens_final.columns:
+                df_itens_final[col] = pd.to_numeric(df_itens_final[col], errors='coerce').astype('Int64')
+        for col in ['QUANTIDADE', 'VALOR_UNITARIO', 'VALOR_TOTAL']:
+            if col in df_itens_final.columns:
+                nulos = df_itens_final[col].isna().sum()
+                df_itens_final[col] = pd.to_numeric(df_itens_final[col], errors='coerce')
+                nulos_depois = df_itens_final[col].isna().sum()
+                if nulos_depois > nulos:
+                    logging.warning(f"[ITENS] {nulos_depois - nulos} novos nulos em {col} após conversão numérica")
+
         cursor = conn.cursor()
         cursor.execute("DELETE FROM nfs_itens;")
         conn.commit()
-        logging.info("Tabela nfs_itens limpa antes da inserção.")
-        
-        df_itens_final.to_sql('nfs_itens', conn, if_exists='append', index=False) # Usar append agora que limpamos
-        logging.info(f"{len(df_itens_final)} registros inseridos em nfs_itens.")
 
-        logging.info("Ingestão de dados concluída com sucesso.")
+        logging.info(f"[ITENS] Inserindo {len(df_itens_final)} linhas em nfs_itens...")
+        df_itens_final.to_sql('nfs_itens', conn, if_exists='append', index=False)
+        logging.info(f"[ITENS] OK — {len(df_itens_final)} registros inseridos.")
+
+        logging.info("Ingestão concluída com sucesso.")
         return True
 
     except FileNotFoundError as e:

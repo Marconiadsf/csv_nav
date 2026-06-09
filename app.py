@@ -334,5 +334,4 @@ if user_input and not chat_disabled:
                 logging.error(f"Erro excepcional no fluxo de chat: {e}", exc_info=True)
 
 st.sidebar.divider()
-st.sidebar.markdown("Desenvolvido com Manus")
 
