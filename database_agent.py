@@ -102,7 +102,7 @@ def query_database_agent(question: str, google_api_key: str):
     try:
         db = get_db_connection()
         llm = ChatGoogleGenerativeAI(
-            model="gemini-3.5-flash",
+            model="gemini-2.5-flash",
             google_api_key=google_api_key,
             temperature=0,
         )
