@@ -4,9 +4,9 @@ import logging
 import os
 from langchain_community.utilities import SQLDatabase
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.agent_toolkits.sql.base import create_sql_agent
-from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
-from langchain.agents.agent_types import AgentType
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.prebuilt import create_react_agent
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -107,18 +107,19 @@ def query_database_agent(question: str, google_api_key: str):
             temperature=0,
         )
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-        agent_executor = create_sql_agent(
-            llm=llm,
-            toolkit=toolkit,
-            verbose=True,
-            agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            handle_parsing_errors=True,
-            prefix=SYSTEM_PREFIX,
-        )
+        tools = toolkit.get_tools()
+
+        agent = create_react_agent(model=llm, tools=tools)
 
         logging.info(f"Enviando pergunta ao agente: {question}")
-        response = agent_executor.invoke({"input": question})
-        return {"result": response.get("output", str(response))}
+        result = agent.invoke({
+            "messages": [
+                SystemMessage(content=SYSTEM_PREFIX),
+                HumanMessage(content=question),
+            ]
+        })
+        output = result["messages"][-1].content
+        return {"result": output}
 
     except FileNotFoundError as e:
         logging.error(f"Banco de dados não encontrado: {e}")
