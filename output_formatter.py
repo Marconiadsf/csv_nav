@@ -80,10 +80,14 @@ def format_response(agent_response: dict, original_question: str) -> str:
 
     # Caso 1: Erro explícito retornado pelo agente
     if "error" in agent_response:
-        error_message = agent_response["error"]
-        logging.error(f"Erro detectado na resposta do agente: {error_message}")
-        # Exibir o erro claramente
-        return f"⚠️ **Ocorreu um erro ao processar sua pergunta:**\n\n```\n{error_message}\n```\n\nPor favor, tente reformular sua pergunta ou verifique os arquivos e a chave de API."
+        code = agent_response["error"]
+        logging.error(f"Erro retornado pelo agente: {code}")
+        messages = {
+            "rate_limit": "Limite de requisições por minuto atingido. Aguarde alguns segundos e tente novamente.",
+            "unavailable": "O modelo está temporariamente sobrecarregado. Tente novamente em alguns segundos.",
+            "unexpected": "Ocorreu um erro inesperado. Tente reformular a pergunta ou verifique sua chave de API.",
+        }
+        return messages.get(code, f"Erro: {code}")
 
     # Caso 2: Resposta bem-sucedida (contida em "result")
     if "result" in agent_response:

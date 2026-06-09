@@ -107,7 +107,9 @@ def query_database_agent(question: str, google_api_key: str):
             temperature=0,
         )
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-        tools = toolkit.get_tools()
+        # sql_db_query_checker faz uma chamada LLM extra por query só pra validar SQL —
+        # com o schema no system prompt o modelo já sabe o que está fazendo, não precisa
+        tools = [t for t in toolkit.get_tools() if t.name != "sql_db_query_checker"]
 
         agent = create_react_agent(model=llm, tools=tools)
 
@@ -133,11 +135,13 @@ def query_database_agent(question: str, google_api_key: str):
         logging.error(f"Banco de dados não encontrado: {e}")
         return {"error": str(e)}
     except Exception as e:
-        logging.error(f"Erro inesperado no agente SQL: {e}", exc_info=True)
-        error_detail = str(e)
-        if "Could not parse LLM output:" in error_detail:
-            error_detail = f"Erro ao interpretar a resposta do modelo: {error_detail}"
-        return {"error": f"Erro ao processar a consulta: {error_detail}"}
+        logging.error(f"Erro no agente: {e}", exc_info=True)
+        error_str = str(e)
+        if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+            return {"error": "rate_limit"}
+        if "503" in error_str or "UNAVAILABLE" in error_str:
+            return {"error": "unavailable"}
+        return {"error": "unexpected"}
 
 
 if __name__ == '__main__':
