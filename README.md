@@ -25,7 +25,7 @@ O padrão de agente usado é ReAct (Reasoning + Acting): o modelo alterna entre 
 | Camada | Tecnologia |
 |---|---|
 | LLM | Google Gemini 2.5 Flash |
-| Orquestração de agente | LangChain (`create_sql_agent`, `SQLDatabaseToolkit`) |
+| Orquestração de agente | LangGraph (`create_react_agent`) + LangChain (`SQLDatabaseToolkit`) |
 | Banco de dados | SQLite |
 | Interface | Streamlit |
 | Manipulação de dados | Pandas |
