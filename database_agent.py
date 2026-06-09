@@ -4,34 +4,78 @@ import logging
 import os
 from langchain_community.utilities import SQLDatabase
 from langchain_google_genai import ChatGoogleGenerativeAI
-# Use the recommended create_sql_agent approach
 from langchain_community.agent_toolkits.sql.base import create_sql_agent
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain.agents.agent_types import AgentType
 
-# Configuração básica de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 DB_FILE = "notas_fiscais.db"
 
+SYSTEM_PREFIX = """Você é um assistente especializado em análise de Notas Fiscais Eletrônicas (NF-e) brasileiras.
+Você tem acesso a um banco de dados SQLite com duas tabelas interligadas pela coluna CHAVE_DE_ACESSO.
+
+## Esquema
+
+**nfs_cabecalho** — uma linha por nota fiscal:
+- CHAVE_DE_ACESSO (PK, TEXT) — chave de 44 dígitos que identifica unicamente a NF-e
+- MODELO, SERIE, NUMERO — identificação da nota
+- NATUREZA_DA_OPERACAO — descrição da operação (ex: "Venda de mercadoria", "Remessa")
+- DATA_EMISSAO — data de emissão da nota
+- EVENTO_MAIS_RECENTE / DATA_HORA_EVENTO_MAIS_RECENTE — último evento registrado (ex: "Autorizado o uso da NF-e", "Cancelamento")
+- CPF_CNPJ_EMITENTE, RAZAO_SOCIAL_EMITENTE, INSCRICAO_ESTADUAL_EMITENTE, UF_EMITENTE, MUNICIPIO_EMITENTE — dados do emitente
+- CNPJ_DESTINATARIO, NOME_DESTINATARIO, UF_DESTINATARIO — dados do destinatário
+- INDICADOR_IE_DESTINATARIO — situação do destinatário no ICMS: 1=contribuinte, 2=isento, 9=outros
+- DESTINO_DA_OPERACAO — 1=operação interna (mesmo estado), 2=interestadual, 3=exterior
+- CONSUMIDOR_FINAL — 0=não é consumidor final, 1=consumidor final
+- PRESENCA_DO_COMPRADOR — modalidade da venda (ex: presencial, internet, teleatendimento)
+- VALOR_NOTA_FISCAL (REAL) — valor total da NF-e em reais
+
+**nfs_itens** — uma linha por item de cada nota:
+- ID_ITEM (PK autoincrement), CHAVE_DE_ACESSO (FK → nfs_cabecalho)
+- NUMERO_PRODUTO — número sequencial do item na nota
+- DESCRICAO_PRODUTO_SERVICO — descrição do produto ou serviço
+- CODIGO_NCM_SH — código NCM de classificação fiscal do produto (8 dígitos)
+- NCM_SH_TIPO_PRODUTO — descrição do tipo de produto segundo a NCM
+- CFOP (INTEGER) — código fiscal da operação:
+    5xxx = operações dentro do estado (ex: 5102=venda de mercadoria dentro do estado)
+    6xxx = operações interestaduais (ex: 6102=venda interestadual)
+    7xxx = exportações
+- QUANTIDADE (REAL) — quantidade vendida
+- UNIDADE — unidade de medida (ex: UN, KG, CX, L)
+- VALOR_UNITARIO (REAL) — preço unitário em reais
+- VALOR_TOTAL (REAL) — valor total do item (QUANTIDADE × VALOR_UNITARIO)
+
+## Regras obrigatórias
+- Sempre responda em português do Brasil
+- Formate valores monetários como R$ X.XXX,XX (padrão brasileiro) e datas como DD/MM/AAAA
+- JOINs entre tabelas: use sempre CHAVE_DE_ACESSO como chave de ligação
+- Nunca execute comandos DML (INSERT, UPDATE, DELETE, DROP)
+- Verifique a query antes de executar; se retornar erro, reescreva e tente novamente
+- Limite listagens longas a no máximo 20 itens, salvo instrução contrária do usuário
+- Se não houver dados para o filtro solicitado, informe claramente que não há registros
+- Se a pergunta for ambígua, escolha a interpretação mais útil e indique qual foi
+- Para totais financeiros, prefira VALOR_NOTA_FISCAL do cabeçalho para totais por nota,
+  e SUM(VALOR_TOTAL) dos itens para totais por produto/categoria
+
+Dado esse contexto, responda com precisão à pergunta do usuário consultando o banco de dados."""
+
+
 def get_db_connection():
-    """ Retorna um objeto SQLDatabase conectado ao banco SQLite. """
     if not os.path.exists(DB_FILE):
         logging.error(f"Arquivo do banco de dados não encontrado: {DB_FILE}")
         raise FileNotFoundError(f"Arquivo do banco de dados não encontrado: {DB_FILE}")
-    
     db_uri = f"sqlite:///{DB_FILE}"
     try:
         db = SQLDatabase.from_uri(db_uri)
-        logging.info(f"Conexão Langchain SQLDatabase estabelecida com {DB_FILE}")
-        logging.info(f"Tabelas encontradas: {db.get_table_names()}")
+        logging.info(f"SQLDatabase conectado a {DB_FILE}. Tabelas: {db.get_table_names()}")
         return db
     except Exception as e:
-        logging.error(f"Erro ao criar SQLDatabase a partir da URI {db_uri}: {e}")
+        logging.error(f"Erro ao criar SQLDatabase a partir de {db_uri}: {e}")
         raise
 
+
 def execute_direct_sql(sql_query: str):
-    """ Executa uma query SQL diretamente no banco e retorna os resultados. """
     conn = None
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -39,22 +83,18 @@ def execute_direct_sql(sql_query: str):
         logging.info(f"Executando SQL direto: {sql_query}")
         cursor.execute(sql_query)
         results = cursor.fetchall()
-        column_names = [description[0] for description in cursor.description] if cursor.description else []
+        column_names = [d[0] for d in cursor.description] if cursor.description else []
         conn.commit()
-        logging.info(f"SQL direto executado com sucesso. {len(results)} linhas retornadas.")
-        formatted_results = [dict(zip(column_names, row)) for row in results]
-        return formatted_results
+        return [dict(zip(column_names, row)) for row in results]
     except sqlite3.Error as e:
-        logging.error(f"Erro ao executar SQL direto \n{sql_query}\n: {e}")
+        logging.error(f"Erro ao executar SQL direto: {e}")
         return {"error": str(e)}
     finally:
         if conn:
             conn.close()
 
+
 def query_database_agent(question: str, google_api_key: str):
-    """ 
-    Usa um agente Langchain SQL para traduzir a pergunta em SQL, executar e retornar o resultado.
-    """
     if not google_api_key:
         logging.error("Chave da API do Google não fornecida.")
         return {"error": "Chave da API do Google não fornecida."}
@@ -62,66 +102,51 @@ def query_database_agent(question: str, google_api_key: str):
     try:
         db = get_db_connection()
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             google_api_key=google_api_key,
             temperature=0,
-            convert_system_message_to_human=True
         )
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-
-        # Criar o Agente SQL com handle_parsing_errors=True
         agent_executor = create_sql_agent(
             llm=llm,
             toolkit=toolkit,
-            verbose=True, 
+            verbose=True,
             agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            handle_parsing_errors=True # Adicionado para tratar erros de parsing
+            handle_parsing_errors=True,
+            prefix=SYSTEM_PREFIX,
         )
 
-        logging.info(f"Executando agente SQL com a pergunta: {question}")
-        prompt_with_context = f"Responda em português. Analise as tabelas nfs_cabecalho (cabeçalho das notas fiscais) e nfs_itens (itens das notas fiscais) que estão relacionadas pela coluna CHAVE_DE_ACESSO. Questão: {question}"
-        
-        response = agent_executor.run(prompt_with_context)
-        logging.info(f"Agente SQL retornou a resposta.")
-        return {"result": response}
+        logging.info(f"Enviando pergunta ao agente: {question}")
+        response = agent_executor.invoke({"input": question})
+        return {"result": response.get("output", str(response))}
 
     except FileNotFoundError as e:
-         logging.error(f"Erro no agente SQL: {e}")
-         return {"error": str(e)}
+        logging.error(f"Banco de dados não encontrado: {e}")
+        return {"error": str(e)}
     except Exception as e:
         logging.error(f"Erro inesperado no agente SQL: {e}", exc_info=True)
-        # Retornar o erro específico para o usuário, se possível
         error_detail = str(e)
-        # Verificar se é um erro de parsing que não foi tratado (apesar do handle_parsing_errors)
         if "Could not parse LLM output:" in error_detail:
-             error_detail = f"Erro ao interpretar a resposta do modelo: {error_detail}"
-        return {"error": f"Erro inesperado ao processar a consulta: {error_detail}"}
+            error_detail = f"Erro ao interpretar a resposta do modelo: {error_detail}"
+        return {"error": f"Erro ao processar a consulta: {error_detail}"}
 
-# Bloco para teste direto do script (opcional)
+
 if __name__ == '__main__':
-    print("--- Teste do Agente Especialista em Banco de Dados ---")
+    print("--- Teste do Agente NF-e ---")
     if not os.path.exists(DB_FILE):
-        print(f"Erro: Banco de dados {DB_FILE} não encontrado. Execute data_ingestion.py primeiro.")
+        print(f"Erro: {DB_FILE} não encontrado. Execute data_ingestion.py primeiro.")
     else:
-        print("\nTeste 1: Execução SQL Direta (Contar cabeçalhos)")
-        direct_result = execute_direct_sql("SELECT COUNT(*) as total FROM nfs_cabecalho;")
-        print(f"Resultado SQL Direto: {direct_result}")
-
-        print("\nTeste 2: Consulta com Agente SQL")
         google_key = os.environ.get("GOOGLE_API_KEY")
         if not google_key:
-            print("AVISO: Chave GOOGLE_API_KEY não encontrada no ambiente. Pulando teste do agente SQL.")
-            print("Defina a variável de ambiente GOOGLE_API_KEY para testar.")
+            print("AVISO: GOOGLE_API_KEY não definida. Pulando teste do agente.")
         else:
-            test_question = "Qual o valor total das notas fiscais emitidas para o destinatário com CNPJ 378257000181?"
-            print(f"Pergunta: {test_question}")
-            agent_result = query_database_agent(test_question, google_key)
-            print(f"Resultado do Agente: {agent_result}")
-            
-            test_question_2 = "Liste os 3 produtos mais vendidos (em quantidade) e suas quantidades totais."
-            print(f"\nPergunta 2: {test_question_2}")
-            agent_result_2 = query_database_agent(test_question_2, google_key)
-            print(f"Resultado do Agente 2: {agent_result_2}")
-
+            perguntas = [
+                "Qual o valor total das notas fiscais?",
+                "Liste os 5 produtos mais vendidos por valor total.",
+                "Quantas notas foram emitidas por estado de destino?",
+            ]
+            for p in perguntas:
+                print(f"\nPergunta: {p}")
+                result = query_database_agent(p, google_key)
+                print(f"Resposta: {result}")
     print("\n--- Teste Concluído ---")
-
